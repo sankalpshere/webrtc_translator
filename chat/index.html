@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<!--
+ * Copyright © Acision 2014. All rights reserved.
+-->
+
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+
+<title>Acision SDK Chat</title>
+
+<link rel="stylesheet" href="/common/css/smoothness/jquery-ui-1.10.4.custom.css" />
+<link rel="shortcut icon" href="img/icon.ico" />
+<script src="/common/js/jquery-1.11.0.js"></script>
+<script src="/common/js/jquery-ui-1.10.4.custom.js"></script>
+<script src="/common/js/underscore.js"></script>
+<script src="/common/js/sdk.js"></script>
+
+<script>
+/** Our local username. */
+var sUsername;
+/** The user to send chat messages to. */
+var sRemoteUser;
+
+/** Reference to the Acision SDK. */
+var acisionSDK = null;
+/** Flag to avoid showing an error on an intentional disconnect. */
+var fNormalDisconnect = false;
+
+/** Reference for current incoming file transfer. */
+var incomingFile;
+/** Reference for current outgoing file transfer. */
+var outgoingFile;
+/** Timeout on file upload. */
+var uploadTimer = null;
+
+var authCode = '';
+const API_KEY = "acisionsdkchatdemo_oauth";
+const UPLOAD_TIMEOUT = 120000; // 2 minutes
+
+
+function dlgLogin_Login() {
+  console.log("dlgLogin_Login()");
+  var config = {
+//    baseUrl: BASE_URL,
+    persistent: true
+  };
+
+  config.password = authCode || null;
+  authCode = '';
+
+  enableDialog("#dlgLogin", false);
+  showSpinner("#dlgLogin", true);
+
+  // Log in to the Acision SDK
+  acisionSDK = new AcisionSDK(API_KEY, {
+    onConnected: acisionSDK_onConnected,
+    onDisconnected: acisionSDK_onDisconnected,
+    onAuthFailure: acisionSDK_onAuthFailure
+  }, config);
+}
+
+function acisionSDK_onConnected() {
+  console.log("acisionSDK_onConnected()");
+
+  // We have successfully connected, so update the UI
+  showSpinner("#dlgLogin", false);
+  enableDialog("#dlgLogin", true);
+  $("#dlgLogin").dialog("close");
+  sUsername = acisionSDK.getAddress().split('@')[0];
+  $("#dlgSelectUser").dialog("option", "title", sUsername).dialog("open");
+}
+
+function acisionSDK_onAuthFailure(evt) {
+  console.log("acisionSDK_onAuthFailure()");
+
+  // Currently the SDK will fire an onDisconnected event, so set our flag so
+  // that we don't display another error dialog
+  fNormalDisconnect = true;
+
+  if(evt && evt.interactiveUrl) {
+    return acisionSDK_oauthLogin(evt.interactiveUrl);
+  }
+
+  // The connection failed. Show an error message and reset the UI
+  showSpinner("#dlgLogin", false);
+  enableDialog("#dlgLogin", true);
+  showError("Login failed.", false);
+
+  acisionSDK = null;
+}
+
+function processUrlParams(url) {
+  var params = url.split('?')[1].split('&');
+  var urlParams = {};
+
+  for(var i = 0 ; i < params.length ; i++) {
+    var param = params[i].split('=');
+
+    urlParams[param[0]] = param[1];
+  }
+
+  return urlParams;
+}
+
+var oauthInterval;
+function acisionSDK_oauthLogin(url) {
+  var iframe = $('#dlgOauth').attr('src', url);
+  var win = iframe[0].contentWindow;
+  iframe.dialog("open");
+  var params = processUrlParams(decodeURIComponent(url));
+
+  // Keep checking window location to see if it matches our redirect URI
+  oauthInterval = setInterval(function() {
+    try {
+      // Fix for IE
+      if(!win.location.origin)
+        win.location.origin = win.location.protocol + '//' + win.location.host;
+
+      var windowLocation = win.location.origin + win.location.pathname;
+
+      if(params.redirect_uri === windowLocation) {
+        var oauthParams = processUrlParams(win.location.search);
+
+        $('#dlgOauth').attr('src', 'about:blank');
+
+        clearInterval(oauthInterval);
+        iframe.dialog("close");
+
+        if(oauthParams.error) {
+          return acisionSDK_onAuthFailure();
+        }
+
+        if(oauthParams.code) {
+          authCode = oauthParams.code;
+          dlgLogin_Login();
+        }
+      }
+    } catch(e) {
+    }
+  }, 200);
+}
+
+function acisionSDK_onDisconnected() {
+  console.log("acisionSDK_onDisconnected()");
+
+  if (fNormalDisconnect) {
+    // We initiated the disconnect, so don't do anything
+    fNormalDisconnect = false;
+    return;
+  }
+
+  showError("Connection lost", true);
+}
+
+function acisionSDK_onMessage(msg) {
+  console.log("acisionSDK_onMessage()");
+
+  console.info("Received message " + msg.content);
+
+  // Force a reload of the audio otherwise Chrome will only ever play the file once
+  document.getElementById("audDing").load();
+  document.getElementById("audDing").play();
+  addChatLine(msg.from, msg.content);
+}
+
+
+function dlgSelectUser_Start() {
+  console.log("dlgSelectUser_Start()");
+
+  sRemoteUser = $("#txtChatWith").val();
+  if (_.isEmpty(sRemoteUser)) {
+    return;
+  }
+
+  acisionSDK.messaging.setCallbacks({
+    onMessage: acisionSDK_onMessage,
+    onFileAvailable: acisionSDK_onFileAvailable
+  });
+
+  // Disable the close handler before closing this dialog so that we don't go
+  // back to the login dialog
+  $("#dlgSelectUser").off("dialogbeforeclose").dialog("close");
+  $("#dlgChat").dialog("option", "title", sRemoteUser).dialog("open");
+}
+
+function dlgSelectUser_beforeClose() {
+  console.log("dlgSelectUser_beforeClose()");
+
+  // This event should only be enabled when cancelling the dialog
+
+  // This is an intentional disconnect so set our flag so that we don't then
+  // display an error dialog
+  fNormalDisconnect = true;
+
+  // Disconnect from the SDK and return to the login dialog
+  acisionSDK.disconnect();
+  acisionSDK = null;
+  $("#txtChatWith").val("");
+  $("#dlgLogin").dialog("open");
+}
+
+
+function btnSend_click(event) {
+  var sMsg = $("#txtMessage").val();
+  $("#txtMessage").val("");
+
+  console.info("Sending message " + sMsg);
+  
+  var options = {};
+  /* Uncomment for fallback functionality 
+  if (document.getElementById('chkFallback').checked) {
+      options.advancedServices = 'fallback';
+  }  */
+
+  acisionSDK.messaging.sendToDestination(sRemoteUser, sMsg, options)
+  addChatLine(sUsername, sMsg);
+}
+
+function btnSendSms_click(event) {
+  var sMsg = $("#txtMessage").val();
+  $("#txtMessage").val("");
+
+  console.info("Sending message " + sMsg);
+  
+  var options = {};
+  options.advancedServices = 'always';
+
+  acisionSDK.messaging.sendToDestination(sRemoteUser, sMsg, options)
+  addChatLine(sUsername, sMsg);
+}
+
+
+// File transfer
+
+function dlgSendFile_Send() {
+  console.log("dlgSendFile_Send()");
+
+  if (_.isEmpty($("#txtFile").val())) {
+    return;
+  }
+
+  outgoingFile = acisionSDK.messaging.sendFileToDestination(sRemoteUser, {
+    file: $("#txtFile")[0].files[0],
+    message: "Someone wants to send you a file!"
+  }, {
+    onAcknowledged: sendFileToDestination_onAcknowledged,
+    onProgress: sendFileToDestination_onProgress,
+    onError: sendFileToDestination_onError
+  });
+
+  $("#dlgSendFile").dialog("option", "buttons", [
+    {text: "Abort", click: dlgSendFile_Abort}
+  ]);
+  uploadTimer = setTimeout(cancelFileUpload, UPLOAD_TIMEOUT);
+
+  showSpinner("#dlgSendFile", true);
+}
+
+function dlgSendFile_Abort() {
+  if (uploadTimer != null) {
+    clearTimeout(uploadTimer);
+    uploadTimer = null;
+  }
+  outgoingFile.abort();
+  showSpinner("#dlgSendFile", false);
+  enableDialog("#dlgSendFile", true);
+  $("#dlgSendFile").dialog("close");
+}
+
+function cancelFileUpload() {
+  outgoingFile.abort();
+  showSpinner("#dlgSendFile", false);
+  enableDialog("#dlgSendFile", true);
+  showError("File transfer timed out", false);
+  $("#dlgSendFile").dialog("close");
+}
+
+function sendFileToDestination_onAcknowledged() {
+  console.log("sendFileToDestination_onAcknowledged()");
+
+  if (uploadTimer != null) {
+    clearTimeout(uploadTimer);
+    uploadTimer = null;
+  }
+  showSpinner("#dlgSendFile", false);
+  $("#pFileSent").show();
+  $("#prgSendFile").hide();
+  $("#dlgSendFile").dialog("option", "buttons", [
+    {text: "OK", click: function() {$("#dlgSendFile").dialog("close");}}
+  ]);
+  enableDialog("#dlgSendFile", true);
+}
+
+function sendFileToDestination_onProgress(fileSizeBytes, bytesSent) {
+  console.log("sendFileToDestination_onProgress(" + fileSizeBytes + ", "
+      + bytesSent + ")");
+  
+  // This event only fires once we start uploading the file, which won't happen
+  // until after the remote user has accepted the transfer.
+  if (uploadTimer != null) {
+    clearTimeout(uploadTimer);
+    uploadTimer = null;
+  }
+
+  if (fileSizeBytes) {
+    $("#prgSendFile").progressbar("option", "max", fileSizeBytes);
+    $("#prgSendFile").progressbar("value", bytesSent);
+  } else {
+    $("#prgSendFile").progressbar("value", false);
+  }
+}
+
+function sendFileToDestination_onError(code, message) {
+  console.log("sendFileToDestination_onError(" + code + ", " + message + ")");
+
+  if (uploadTimer != null) {
+    clearTimeout(uploadTimer);
+    uploadTimer = null;
+  }
+  showSpinner("#dlgSendFile", false);
+  enableDialog("#dlgSendFile", true);
+  showError(message, false);
+  $("#dlgSendFile").dialog("close");
+}
+
+function acisionSDK_onFileAvailable(details) {
+  console.log("acisionSDK_onFileAvailable()");
+
+  console.info("Receiving file");
+
+  incomingFile = details;
+  
+  var sFrom = details.from.split("@")[0];
+  $("#spnFileName").text(details.fileName);
+  $("#spnFileSize").text(details.fileSize);
+  $("#spnFileType").text(details.contentType);
+
+  // Force a reload of the audio otherwise Chrome will only ever play the file once
+  document.getElementById("audDing").load();
+  document.getElementById("audDing").play();
+  enableDialog("#dlgReceiveFile", true);
+  $("#pFileLink").hide();
+  $("#prgReceiveFile").progressbar("value", 0).show();
+  $("#dlgReceiveFile").dialog("option", "buttons", [
+    {text: "Reject", click: dlgReceiveFile_Reject},
+    {text: "Accept", click: dlgReceiveFile_Accept}
+  ]).dialog("option", "title", sFrom + " wants to send you a file");
+  $("#dlgReceiveFile").dialog("open");
+}
+
+function dlgReceiveFile_Accept() {
+  $("#dlgReceiveFile").dialog("option", "buttons", [
+    {text: "Abort", click: dlgReceiveFile_Abort}
+  ]);
+  showSpinner("#dlgReceiveFile", true);
+
+  incomingFile.accept({
+    onDownloaded: acceptFile_onDownloaded,
+    onProgress: acceptFile_onProgress,
+    onError: acceptFile_onError
+  });
+}
+
+function dlgReceiveFile_Reject() {
+  incomingFile.reject();
+  $("#dlgReceiveFile").dialog("close");
+}
+
+function dlgReceiveFile_Abort() {
+  incomingFile.abort();
+  showSpinner("#dlgReceiveFile", false);
+  enableDialog("#dlgReceiveFile", true);
+  $("#dlgReceiveFile").dialog("close");
+}
+
+function dlgReceiveFile_Close() {
+  $("#dlgReceiveFile").dialog("close");
+}
+
+function acceptFile_onDownloaded(details, file) {
+  console.log("acceptFile_onDownloaded(...)");
+
+  $("#aFileLink").attr("href", URL.createObjectURL(file));
+  $("#aFileLink").attr("download", details.fileName);
+  $("#aFileLink").data("blob", file);
+  $("#prgReceiveFile").hide();
+  $("#pFileLink").show();
+
+  showSpinner("#dlgReceiveFile", false);
+  $("#dlgReceiveFile").dialog("option", "buttons", [
+    {text: "Close", click: dlgReceiveFile_Close}
+  ]);
+  enableDialog("#dlgReceiveFile", true);
+}
+
+function acceptFile_onProgress(fileSizeBytes, bytesSent) {
+  console.log("acceptFile_onProgress(" + fileSizeBytes + ", " + bytesSent + ")");
+
+  if (fileSizeBytes) {
+    $("#prgReceiveFile").progressbar("option", "max", fileSizeBytes);
+    $("#prgReceiveFile").progressbar("value", bytesSent);
+  } else {
+    $("#prgReceiveFile").progressbar("value", false);
+  }
+}
+
+function acceptFile_onError(code, message) {
+  console.log("acceptFile_onError(" + code + ", " + message + ")");
+
+  showSpinner("#dlgReceiveFile", false);
+  enableDialog("#dlgReceiveFile", true);
+  showError(message, false);
+  $("#dlgReceiveFile").dialog("close");
+}
+
+function aFileLink_click(event) {
+  if (window.navigator.msSaveOrOpenBlob) {
+    // Probably using IE, which doesn't support directly opening blob: URIs. Use
+    // the IE-specific function instead.
+    window.navigator.msSaveOrOpenBlob($("#aFileLink").data("blob"),
+      $("#aFileLink").attr("download"));
+    event.preventDefault();
+  }
+}
+
+/**
+ * Disconnect from the SDK and reset the page back to the login dialog.
+ */
+function reset() {
+  console.log("reset())");
+
+  if (!_.isNull(acisionSDK)) {
+    try {
+      // This is an intentional disconnect so set our flag so that we
+      // don't then display an error dialog
+      fNormalDisconnect = true;
+
+      acisionSDK.disconnect();
+      acisionSDK = null;
+    } catch (err) {
+      console.warn("Error when disconnecting SDK: ", err)
+    }
+  }
+
+  // Disable close handler before closing the Select User dialog
+  $("#dlgSelectUser").off("dialogbeforeclose");
+
+  // Close all dialogs, then open login dialog
+  $(".ui-dialog-content").dialog("close");
+  $("#dlgLogin").dialog("open");
+}
+
+/**
+ * Adds a new chat line to the chat window.
+ *
+ * @param {string} orig
+ * 			The user that sent the message
+ * @param {string} message
+ * 			The message to add
+ */
+function addChatLine(orig, message) {
+  divLine = $(document.createElement("div"));
+  spnOrig = $(document.createElement("span"));
+  spnMessage = $(document.createElement("span"));
+  spnOrig.addClass("spnOrig");
+  spnMessage.addClass("spnMessage");
+  spnOrig.text(orig.split("@")[0] + " (" + (new Date()).toLocaleTimeString() + "):");
+  spnMessage.text(message);
+  divLine.append(spnOrig).append(spnMessage);
+  $("#divChatLog").append(divLine).scrollTop($("#divChatLog").prop("scrollHeight"));
+}
+
+//Utility functions for managing the user interface
+
+function dlgLogin_open() {
+  $(window).off('beforeunload');
+}
+
+function dlgLogin_close() {
+  $(window).on('beforeunload', window_onbeforeunload);
+}
+
+function dlgOauth_open() {
+  console.log("dlgOauth_open()");
+}
+
+function dlgOauth_close() {
+
+}
+function window_onbeforeunload(event) {
+  return 'You are currently logged in. Leaving this page will log you out.';
+}
+
+function window_onunload(event) {
+  reset();
+}
+
+function dlgSelectUser_open() {
+  console.log("dlgSelectUser_open()");
+
+  // Enable the close handler so that cancelling the dialog sends us back to
+  // the login dialog
+  $("#dlgSelectUser").on("dialogbeforeclose", dlgSelectUser_beforeClose);
+}
+
+function dlgChat_beforeClose(event, ui) {
+  console.log("dlgChat_beforeclose()");
+
+  $("#divChatLog").empty();
+  $("#dlgSelectUser").dialog("open");
+}
+
+function btnSendPhoto_click(event, ui) {
+  console.log("btnSendPhoto_click()");
+
+  $("#pFileSent").hide();
+  $("#prgSendFile").progressbar("value", 0).show();
+  enableDialog("#dlgSendFile", true);
+  $("#dlgSendFile").dialog("option", "buttons", [
+    {text: "Send file", click: dlgSendFile_Send}
+  ]).dialog("open");
+}
+
+function dlgError_OK(event, ui) {
+  console.log("dlgError_OK(" + event + ")");
+
+  if ($(this).data("fatal")) {
+    reset();
+  } else {
+    $(this).dialog("close");
+  }
+}
+
+/**
+ * Handle the enter key in a text box by running the provided submitFunction.
+ *
+ * @param submitFunction
+ *       the event handler to run when the Enter key is pressed
+ * @return a keypress event handler
+ */
+function handleEnter(submitFunction) {
+  return function(event) {
+    if (event.keyCode == 13) {
+      submitFunction();
+      event.preventDefault();
+    }
+  }
+}
+
+/**
+ * Enable/disable a dialog by setting the disabled attribute on the dialog
+ * buttons.
+ *
+ * @param dialog
+ *       the JQuery selector of the dialog to modify
+ * @param enable
+ *       true to enable the dialog or false to disable it
+ */
+function enableDialog(dialog, enable) {
+  button = $(dialog).dialog("widget").find("button");
+  if (enable) {
+    button.removeAttr("disabled").removeClass("ui-state-disabled");
+  } else {
+    button.attr("disabled", "disabled").addClass("ui-state-disabled");
+  }
+}
+
+/**
+ * Show/hide a busy spinner in the button pane of a dialog.
+ *
+ * @param dialog
+ *       the JQuery selector of the dialog to modify
+ * @param show
+ *       true to show the spinner or false to hide it
+ */
+function showSpinner(dialog, show) {
+  if (show) {
+    $(dialog).dialog("widget").find(".ui-dialog-buttonset").prepend(
+        $("#imgSpinner").removeClass("ui-helper-hidden"));
+  } else {
+    $("body").append($("#imgSpinner").addClass("ui-helper-hidden"));
+  }
+}
+
+/**
+ * Display an error message.
+ *
+ * @param {string} message
+ *       The message to display
+ * @param {boolean} fatal
+ *       Whether or not this is a fatal error. If true, then reset() will be
+ *       called when the error message is closed.
+ */
+function showError(message, fatal) {
+  $("#spnErrorMessage").text(message);
+  $("#dlgError").data("fatal", fatal);
+  $("#dlgError").dialog("open");
+}
+
+//Initialise the user interface
+$().ready(function setup() {
+  $.widget("ui.dialog", $.ui.dialog, {
+    _title: function (title) {
+      // Override title function to insert the Acision logo (this is
+      // is needed as the default function escapes HTML)
+      title.html("<img src='img/icon.png' width='16' height='16' style='margin-right: 0.5em; vertical-align: bottom;'>"
+              + this.options.title);
+    }
+  });
+
+  $("#dlgLogin").dialog({
+    dialogClass: "no-close",
+    autoOpen: false,
+    closeOnEscape: false,
+    hide: true,
+    show: true,
+    title: "Acision SDK Chat",
+    buttons: [
+      {text: "Login with Acision Forge", click: dlgLogin_Login}
+    ],
+    open: dlgLogin_open,
+    close: dlgLogin_close
+  });
+
+  $("#dlgOauth").dialog({
+    dialogClass: "no-close",
+    autoOpen: false,
+    closeOnEscape: false,
+    hide: true,
+    show: true,
+    title: "Login with Acision Forge",
+    open: dlgOauth_open,
+    close: dlgOauth_close
+  });
+
+  $("#dlgSelectUser").dialog({
+    autoOpen: false,
+    closeOnEscape: false,
+    hide: true,
+    show: true,
+    buttons: [
+      {text: "Logout", click: function() {$(this).dialog("close")}},
+      {text: "Start chat", click: dlgSelectUser_Start}
+    ],
+    open: dlgSelectUser_open
+  });
+
+  $("#dlgChat").dialog({
+    autoOpen: false,
+    closeOnEscape: false,
+    hide: true,
+    show: true,
+    width: 400,
+    beforeClose: dlgChat_beforeClose,
+    buttons: [
+      {text: "Disconnect", click: function() {$(this).dialog("close")}},
+    ]
+  });
+
+  $("#dlgSendFile").dialog({
+    autoOpen: false,
+    closeOnEscape: false,
+    hide: true,
+    show: true,
+    modal: true,
+    title: "Send file"
+  });
+  $("#prgSendFile").progressbar();
+
+  $("#dlgReceiveFile").dialog({
+    autoOpen: false,
+    closeOnEscape: false,
+    hide: true,
+    show: true,
+    modal: true,
+    title: "Receive file",
+  });
+  $("#prgReceiveFile").progressbar();
+
+  $("#dlgError").dialog({
+    title: "Error",
+    autoOpen: false,
+    hide: true,
+    show: true,
+    modal: true,
+    buttons: [
+      {text: "OK", click: dlgError_OK}
+    ]
+  });
+
+  $("#btnSend").button().click(btnSend_click);
+  $("#btnSendSms").button().click(btnSendSms_click);
+  $("#btnSendPhoto").button().click(btnSendPhoto_click);
+
+  $("#txtUsername").keypress(handleEnter(dlgLogin_Login));
+  $("#txtPassword").keypress(handleEnter(dlgLogin_Login));
+  $("#txtChatWith").keypress(handleEnter(dlgSelectUser_Start));
+  $("#txtMessage").keypress(handleEnter(btnSend_click));
+
+  $(window).on("unload", window_onunload);
+
+  $("#dlgLogin").dialog("open");
+  
+  $("#aFileLink").click(aFileLink_click);
+})
+</script>
+
+<style>
+#divBackground {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background: url(img/background.jpg) no-repeat center center fixed;
+  background-size: cover;
+  opacity: 0.85;
+}
+
+body {
+  font-size: 70%;
+}
+
+.ui-dialog-buttonset {
+  text-align: right;
+}
+
+.no-close .ui-dialog-titlebar-close {
+  display: none;
+}
+
+.no-title .ui-dialog-titlebar {
+  display: none;
+}
+
+.no-wrap {
+  white-space: nowrap;
+}
+
+#divChatLog {
+  height: 23em;
+  overflow: auto;
+}
+
+#dlgOauth {
+  padding: 0;
+  min-height: 210px !important;
+  min-width: 280px !important;
+}
+
+#divReceiveFile {
+  height: 20em;
+  overflow: auto;
+}
+
+.spnOrig {
+  display: block;
+  font-weight: bold;
+}
+
+.spnMessage {
+  display: block;
+  margin-left: 1em;
+  margin-bottom: 0.5em;
+}
+
+#imgSpinner {
+  vertical-align: middle;
+  margin-right: 1em;
+}
+</style>
+</head>
+
+<body>
+  <div id="divBackground"></div>
+
+  <div id="dlgLogin" class="ui-widget">
+  </div>
+
+  <iframe id="dlgOauth" class="ui-widget"></iframe>
+
+  <div id="dlgSelectUser" class="ui-widget">
+    <p>
+      Chat with<br /> <input type="text" id="txtChatWith" />
+    </p>
+  </div>
+
+  <div id="dlgChat" class="ui-widget">
+    <p class="no-wrap">
+      <input type="text" id="txtMessage" size=30 maxlength=255
+        autocomplete=off />
+      <span style="float:right">
+        <button id="btnSend">Send</button>
+        <button id="btnSendSms">Send SMS</button>
+      </span>
+    </p>
+    <p align="right">
+      <button id="btnSendPhoto">Send photo</button>
+    </p>
+    <!-- /* Uncomment for fallback functionality 
+    <p>
+      <label>Fallback to SMS</label>
+      <input type="checkbox" id="chkFallback" name="chkFallback" value="ON">
+    </p> -->
+
+    <div id="divChatLog" class="ui-widget-content"></div>
+  </div>
+
+  <div id="dlgSendFile" class="ui-widget">
+    <input type="file" id="txtFile" size=20 />
+    <p id="pFileSent">
+      File successfully transferred
+    </p>
+    <div id="prgSendFile" style="margin-top: 2em"></div>
+  </div>
+
+  <div id="dlgReceiveFile" class="ui-widget">
+    <p>
+      File name: <span id="spnFileName"></span><br>
+      File size: <span id="spnFileSize"></span><br>
+      File type: <span id="spnFileType"></span><br>
+    </p>
+    <p id="pFileLink">
+      <a id="aFileLink" href="#">Download file</a>
+    </p>
+    <div id="prgReceiveFile" style="margin-top: 2em"></div>
+  </div>
+
+  <div id="dlgError" class="ui-widget ui-front">
+    <p id="pErrorMessage" class="ui-state-error ui-corner-all"
+      style="padding: 0.5em;">
+      <span class="ui-icon ui-icon-alert"
+        style="float: left; margin-right: 0.5ex;"></span>
+      <span id="spnErrorMessage"
+        style="display: block; overflow: hidden"></span>
+    </p>
+  </div>
+
+  <img id="imgSpinner" src="img/ajax-loader.gif" height="32" width="32"
+    class="ui-helper-hidden">
+  <audio id="audDing" src="/common/audio/ding8.wav" preload="auto"></audio> 
+</body>
+</html>
