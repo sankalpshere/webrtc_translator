@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<!--
+ * Copyright © Acision 2014. All rights reserved.
+-->
+
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+
+<title>Acision SDK Demos</title>
+
+<link rel="stylesheet" href="/common/css/smoothness/jquery-ui-1.10.4.custom.css" />
+<link rel="shortcut icon" href="/common/img/icon.ico" />
+<script src="/common/js/jquery-1.11.0.js"></script>
+<script src="/common/js/jquery-ui-1.10.4.custom.js"></script>
+
+<script>
+/**
+ * Handle the enter key in a text box by running the provided submitFunction.
+ *
+ * @param submitFunction
+ *       the event handler to run when the Enter key is pressed
+ * @return a keypress event handler
+ */
+function handleEnter(submitFunction) {
+  return function(event) {
+    if (event.keyCode == 13) {
+      submitFunction();
+      event.preventDefault();
+    }
+  }
+}
+
+/**
+ * Enable/disable a dialog by setting the disabled attribute on the dialog
+ * buttons.
+ *
+ * @param dialog
+ *       the JQuery selector of the dialog to modify
+ * @param enable
+ *       true to enable the dialog or false to disable it
+ */
+function enableDialog(dialog, enable) {
+  button = $(dialog).dialog("widget").find("button");
+  if (enable) {
+    button.removeAttr("disabled").removeClass("ui-state-disabled");
+  } else {
+    button.attr("disabled", "disabled").addClass("ui-state-disabled");
+  }
+}
+
+/**
+ * Show/hide a busy spinner in the button pane of a dialog.
+ *
+ * @param dialog
+ *       the JQuery selector of the dialog to modify
+ * @param show
+ *       true to show the spinner or false to hide it
+ */
+function showSpinner(dialog, show) {
+  if (show) {
+    $(dialog).dialog("widget").find(".ui-dialog-buttonset").prepend(
+        $("#imgSpinner").removeClass("ui-helper-hidden"));
+  } else {
+    $("#imgSpinner").addClass("ui-helper-hidden")
+  }
+}
+
+/**
+ * Display an error message.
+ *
+ * @param {string} message
+ *       The message to display
+ * @param {boolean} fatal
+ *       Whether or not this is a fatal error. If true, then reset() will be
+ *       called when the error message is closed.
+ */
+function showError(message, fatal) {
+  $("#spnErrorMessage").text(message);
+  $("#dlgError").data("fatal", fatal);
+  $("#dlgError").dialog("open");
+}
+
+//Initialise the user interface
+$().ready(function setup() {
+  $.widget("ui.dialog", $.ui.dialog, {
+    _title: function (title) {
+      // Override title function to insert the Acision logo (this is
+      // is needed as the default function escapes HTML)
+      title.html("<img src='/common/img/icon.png' width='16' height='16' style='margin-right: 0.5em; vertical-align: bottom;'>"
+              + this.options.title);
+    }
+  });
+
+  $("#dlgDemos").dialog({
+    dialogClass: "no-close",
+    autoOpen: false,
+    closeOnEscape: false,
+    hide: true,
+    show: true,
+    title: "Acision SDK Demos",
+  });
+
+  $("#btnChat").button().click(function() {window.location.href = '/chat/'});
+  $("#btnWebRTC").button().click(function() {window.location.href = '/webrtc/'});
+  $("#btnXO").button().click(function() {window.location.href = '/noughtsandcrosses/'});
+
+
+  $("#dlgDemos").dialog("open");
+})
+</script>
+
+<style>
+#divBackground {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background: url(/common/img/background.jpg) no-repeat center center fixed;
+  background-size: cover;
+  opacity: 0.85;
+}
+
+body {
+  font-size: 70%;
+}
+
+.ui-dialog-buttonset {
+  text-align: right;
+}
+
+.no-close .ui-dialog-titlebar-close {
+  display: none;
+}
+
+.no-title .ui-dialog-titlebar {
+  display: none;
+}
+
+.no-wrap {
+  white-space: nowrap;
+}
+
+#imgSpinner {
+  vertical-align: middle;
+  margin-right: 1em;
+}
+</style>
+</head>
+
+<body>
+  <div id="divBackground"></div>
+
+  <div id="dlgDemos" class="ui-widget">
+    <p>
+      <button id="btnChat">
+        <img src='/chat/img/icon.png' width='16' height='16' style='margin-right: 0.5em; vertical-align: top;'>
+        Launch Chat
+      </button>
+    </p>
+    <p>
+      <button id="btnWebRTC">
+        <img src='/webrtc/img/icon.png' width='16' height='16' style='margin-right: 0.5em; vertical-align: top;'>
+        Launch Video Call
+      </button>
+    </p>
+    <p>
+      <button id="btnXO">
+        <img src='/noughtsandcrosses/img/icon.png' width='16' height='16' style='margin-right: 0.5em; vertical-align: top;'>
+        Launch Noughts &amp; Crosses
+      </button>
+    </p>
+  </div>
+
+  <img id="imgSpinner" src="/common/img/ajax-loader.gif" height="32" width="32"
+    class="ui-helper-hidden">
+</body>
+</html>

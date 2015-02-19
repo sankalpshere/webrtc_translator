@@ -1,0 +1,57 @@
+#divBackground {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background: url(../img/background.jpg) no-repeat center center fixed;
+  background-size: cover;
+  opacity: 0.85;
+}
+
+body {
+  font-size: 70%;
+}
+
+.ui-dialog-buttonset {
+  text-align: right;
+}
+
+.no-close .ui-dialog-titlebar-close {
+  display: none;
+}
+
+.no-title .ui-dialog-titlebar {
+  display: none;
+}
+
+.no-wrap {
+  white-space: nowrap;
+}
+
+#divChatLog {
+  height: 25em;
+  overflow: auto;
+}
+
+#dlgOauth {
+  padding: 0;
+  min-height: 210px !important;
+  min-width: 280px !important;
+}
+
+.spnOrig {
+  display: block;
+  font-weight: bold;
+}
+
+.spnMessage {
+  display: block;
+  margin-left: 1em;
+  margin-bottom: 0.5em;
+}
+
+#imgSpinner {
+  vertical-align: middle;
+  margin-right: 1em;
+}

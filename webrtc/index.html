@@ -19,7 +19,10 @@
 
 <script>
 /** Our local username. */
-var sUsername;
+var sUsername = "sankalpshere_gmail_com_2";
+
+var sPassword = "ZSBbTPoTM";
+
 /** The user to send chat messages to. */
 var sRemoteUser;
 
@@ -30,22 +33,32 @@ var mediaSession = null;
 /** Flag to avoid showing an error on an intentional disconnect. */
 var fNormalDisconnect = false;
 
+/*translator access toekn*/
+var accessToken = "VKHyM86ppOPq0qS9DtFeK89xjf2pTOTrNg";
+
+
 var authCode = '';
-const API_KEY = "acisionsdkwebrtcdemo_oauth";
+const API_KEY = "3RfHiAMVpdw3";
 
 
 function dlgLogin_Login() {
   console.log("dlgLogin_Login()");
   var config = {
 //    baseUrl: BASE_URL,
-    persistent: true
+    persistent: true,
+    username:  sUsername,
+    password: sPassword
   };
-
-  config.password = authCode || null;
+  
+  //config.password = authCode || null;
   authCode = '';
+
 
   enableDialog("#dlgLogin", false);
   showSpinner("#dlgLogin", true);
+
+  console.log(config.username);
+  console.log(config.password);
 
   // Log in to the Acision SDK
   acisionSDK = new AcisionSDK(API_KEY, {
@@ -232,12 +245,38 @@ function acisionSDK_onIncomingSession(event) {
   })
   mediaSession.accept();
 
+  start_translator();
   $("#dlgChat").dialog("option", "title", sRemoteUser).dialog("open");
 
   $("#vidRemote").fadeTo(500, 1);
   showSpinner("#dlgChat", false);
 }
 
+function   start_translator() {
+
+  //@todo: I am trying to integrate google web speech API to get the speech spoken and convert in real time.
+  // couldn't complete this part :(
+  //Example: http://stiltsoft.com/blog/2013/05/google-chrome-how-to-use-the-web-speech-api/
+  
+
+  //For now let's stick to English to Spanish translation
+  var from = "en", to = "es", text = "text retrived from google web speech API";
+
+  var s = document.createElement("script");
+  s.src = "http://api.microsofttranslator.com/V2/Ajax.svc/Translate" +
+      "?appId=Bearer " + encodeURIComponent(accessToken) +
+      "&from=" + encodeURIComponent(from) +
+      "&to=" + encodeURIComponent(to) +
+      "&text=" + encodeURIComponent(text) +
+      "&oncomplete=translation_complete";
+  document.body.appendChild(s);
+ 
+}
+
+function translation_complete(response) {
+  //Create a subtext element and show the trasnlated response
+  alert(response);
+}
 
 // Common functions for both video call modes
 
